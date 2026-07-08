@@ -29,8 +29,8 @@ cxp ccsm
 
 That writes the wrapper entries into `~/.ccsm/config.json`, so ccsm can launch
 Claude Code through `ccp` and Codex through `cxp`. If ccsm is already running,
-the installer stops it before writing the CLI config and starts it again after,
-so the running backend cannot save an older config over the new entries.
+the wrappers update it through ccsm's own `/api/config` endpoint rather than
+stopping it or editing the file behind its back.
 
 ## Notes
 
