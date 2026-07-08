@@ -168,32 +168,6 @@ function Register-Gc2ccWithCcsm {
     }
 }
 
-function Get-CcsmHome {
-    if ($env:CCSM_HOME) { return $env:CCSM_HOME }
-    return (Join-Path $HOME '.ccsm')
-}
-
-function Get-CcsmPreferredPort {
-    $cfg = Join-Path (Get-CcsmHome) 'config.json'
-    if (Test-Path $cfg) {
-        try {
-            $j = Get-Content $cfg -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($j.port) { return [int]$j.port }
-        } catch {}
-    }
-    return 7777
-}
-
-function Test-CcsmHealth {
-    param([int] $Port)
-    try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$Port/api/health" -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop
-        $j = $r.Content | ConvertFrom-Json
-        if ($j.name -eq '@bakapiano/ccsm') { return $true }
-    } catch {}
-    return $false
-}
-
 function Resolve-CcsmCommand {
     $cmd = Resolve-RequiredCommand 'ccsm.cmd'
     if ($cmd) { return $cmd }

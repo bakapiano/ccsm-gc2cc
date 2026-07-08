@@ -30,7 +30,9 @@ cxp ccsm
 That writes the wrapper entries into `~/.ccsm/config.json`, so ccsm can launch
 Claude Code through `ccp` and Codex through `cxp`. If ccsm is already running,
 the wrappers update it through ccsm's own `/api/config` endpoint rather than
-stopping it or editing the file behind its back.
+stopping it or editing the file behind its back. The installer invokes the
+wrappers and `ccsm.cmd` by their installed paths, so it does not rely on the
+current shell already having refreshed PATH after npm/gc2cc installation.
 
 ## Notes
 
