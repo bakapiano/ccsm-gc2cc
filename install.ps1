@@ -88,6 +88,17 @@ function Resolve-Npm {
     return $null
 }
 
+function Resolve-WindowsPowerShell {
+    $candidates = @()
+    if ($env:SystemRoot) { $candidates += (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') }
+    if ($env:WINDIR)     { $candidates += (Join-Path $env:WINDIR     'System32\WindowsPowerShell\v1.0\powershell.exe') }
+    if ($PSHOME)         { $candidates += (Join-Path $PSHOME 'powershell.exe') }
+    foreach ($p in $candidates) {
+        if ($p -and (Test-Path $p)) { return $p }
+    }
+    return 'powershell.exe'
+}
+
 function Invoke-Gc2ccInstall {
     if ($SkipGc2cc) {
         Warn 'Skipping gc2cc install by request.'
@@ -103,7 +114,7 @@ function Invoke-Gc2ccInstall {
         }
 
         Info "Installing gc2cc wrappers: $InstallClis"
-        Invoke-Native -FilePath 'powershell.exe' -ArgumentList @(
+        Invoke-Native -FilePath (Resolve-WindowsPowerShell) -ArgumentList @(
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
             '-File', $tmp,
@@ -140,14 +151,17 @@ function Install-Ccsm {
     Refresh-Path
 }
 
-function Resolve-Wrapper {
+function Resolve-WrapperScript {
     param([Parameter(Mandatory)][ValidateSet('ccp','cxp')][string] $Name)
 
-    $canonical = Join-Path $env:LOCALAPPDATA ("gc2cc\bin\{0}.cmd" -f $Name)
+    $canonical = Join-Path $env:LOCALAPPDATA ("gc2cc\bin\{0}.ps1" -f $Name)
     if (Test-Path $canonical) { return $canonical }
 
-    $fromPath = Resolve-RequiredCommand ("$Name.cmd")
-    if ($fromPath) { return $fromPath }
+    $cmd = Resolve-RequiredCommand ("$Name.cmd")
+    if ($cmd) {
+        $candidate = Join-Path (Split-Path $cmd -Parent) "$Name.ps1"
+        if (Test-Path $candidate) { return $candidate }
+    }
 
     return $canonical
 }
@@ -159,12 +173,17 @@ function Register-Gc2ccWithCcsm {
     }
 
     foreach ($name in @('ccp', 'cxp')) {
-        $cmd = Resolve-Wrapper $name
-        if (-not (Test-Path $cmd)) {
-            Die "$name wrapper was not found at $cmd. The gc2cc install did not complete."
+        $script = Resolve-WrapperScript $name
+        if (-not (Test-Path $script)) {
+            Die "$name wrapper script was not found at $script. The gc2cc install did not complete."
         }
         Info "Registering $name in ccsm config"
-        Invoke-Native -FilePath $cmd -ArgumentList @('ccsm') -FailureMessage "$name ccsm registration failed"
+        Invoke-Native -FilePath (Resolve-WindowsPowerShell) -ArgumentList @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $script,
+            'ccsm'
+        ) -FailureMessage "$name ccsm registration failed"
     }
 }
 
