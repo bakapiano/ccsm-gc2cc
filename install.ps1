@@ -195,13 +195,15 @@ function Test-CcsmHealth {
 }
 
 function Stop-RunningCcsm {
+    if ($SkipCcsmConfig) { return }
+
     $preferred = Get-CcsmPreferredPort
     $ports = @($preferred)
     for ($i = 1; $i -le 9; $i++) { $ports += ($preferred + $i) }
 
     foreach ($port in $ports) {
         if (-not (Test-CcsmHealth -Port $port)) { continue }
-        Info "Restarting ccsm so the new CLI config is loaded (port $port)"
+        Info "Stopping ccsm before writing CLI config (port $port)"
         if ($DryRun) { return }
         try {
             Invoke-WebRequest -Uri "http://localhost:$port/api/shutdown" -Method POST -Body '{}' -ContentType 'application/json' -UseBasicParsing -TimeoutSec 2 | Out-Null
@@ -250,8 +252,6 @@ function Launch-Ccsm {
         return
     }
 
-    Stop-RunningCcsm
-
     Refresh-Path
     $ccsm = Resolve-CcsmCommand
     if (-not $ccsm) {
@@ -274,6 +274,7 @@ Write-Host ''
 
 Invoke-Gc2ccInstall
 Install-Ccsm
+Stop-RunningCcsm
 Register-Gc2ccWithCcsm
 Launch-Ccsm
 
