@@ -5,6 +5,8 @@ One-line Windows installer for:
 - `@bakapiano/ccsm`
 - `gc2cc` with both `ccp` and `cxp`
 - ccsm CLI registrations for `ccp` and `cxp`
+- first-run interactive `ccp config` / `cxp config` when their config files do
+  not exist yet
 
 ## Install
 
@@ -20,9 +22,12 @@ The script delegates the proxy/service setup to the canonical gc2cc installer:
 https://bakapiano.github.io/gc2cc/install.ps1 -InstallClis ccp,cxp -NonInteractive
 ```
 
-Then it installs ccsm through npm and runs:
+Then it runs missing first-run configs, installs ccsm through npm, and registers
+the wrappers with ccsm:
 
 ```powershell
+ccp config   # only when ~/.local/share/gc2cc/ccp.json is missing
+cxp config   # only when ~/.local/share/gc2cc/cxp.json is missing
 ccp ccsm
 cxp ccsm
 ```

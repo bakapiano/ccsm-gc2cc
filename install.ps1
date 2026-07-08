@@ -166,13 +166,48 @@ function Resolve-WrapperScript {
     return $canonical
 }
 
+function Get-RequestedWrapperNames {
+    $names = @($InstallClis -split '[,;\s]+' |
+        Where-Object { $_ -and $_ -ne 'none' } |
+        ForEach-Object { $_.ToLowerInvariant() })
+    return @($names | Where-Object { $_ -in @('ccp', 'cxp') } | Select-Object -Unique)
+}
+
+function Get-Gc2ccConfigPath {
+    param([Parameter(Mandatory)][ValidateSet('ccp','cxp')][string] $Name)
+    return (Join-Path $HOME (".local\share\gc2cc\{0}.json" -f $Name))
+}
+
+function Invoke-MissingGc2ccConfig {
+    foreach ($name in Get-RequestedWrapperNames) {
+        $configPath = Get-Gc2ccConfigPath $name
+        if (Test-Path $configPath) {
+            Ok "$name config already exists: $configPath"
+            continue
+        }
+
+        $script = Resolve-WrapperScript $name
+        if (-not (Test-Path $script)) {
+            Die "$name wrapper script was not found at $script. The gc2cc install did not complete."
+        }
+
+        Info "$name config not found; running interactive '$name config' once."
+        Invoke-Native -FilePath (Resolve-WindowsPowerShell) -ArgumentList @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $script,
+            'config'
+        ) -FailureMessage "$name config failed"
+    }
+}
+
 function Register-Gc2ccWithCcsm {
     if ($SkipCcsmConfig) {
         Warn 'Skipping ccsm CLI registration by request.'
         return
     }
 
-    foreach ($name in @('ccp', 'cxp')) {
+    foreach ($name in Get-RequestedWrapperNames) {
         $script = Resolve-WrapperScript $name
         if (-not (Test-Path $script)) {
             Die "$name wrapper script was not found at $script. The gc2cc install did not complete."
@@ -240,6 +275,7 @@ Info 'gc2cc may prompt for UAC and GitHub Copilot device-code auth.'
 Write-Host ''
 
 Invoke-Gc2ccInstall
+Invoke-MissingGc2ccConfig
 Install-Ccsm
 Register-Gc2ccWithCcsm
 Launch-Ccsm
