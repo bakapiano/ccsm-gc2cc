@@ -8,6 +8,7 @@ One-line Windows installer for:
 - `ccp` as the ccsm default CLI (`-DefaultCli cxp` is also supported)
 - first-run interactive `ccp config` / `cxp config` when their config files do
   not exist yet
+- explicit use of the global npm source for every npm package install
 
 ## Install
 
@@ -40,6 +41,13 @@ If ccsm is already running, the installer updates it through ccsm's own
 duplicate `ccp` / `cxp` entries are removed. The installer uses installed
 absolute paths, so it does not rely on the current shell already having
 refreshed PATH after npm/gc2cc installation.
+
+The installer reads `npm config get registry --location=global`, prints the
+resolved source, passes it into the gc2cc installer, and explicitly supplies it
+to every npm package install via `--registry`. On this machine that resolves to
+the configured corporate npm source rather than npmjs.org. Use `-NpmRegistry`
+only when running the downloaded script with arguments and intentionally
+overriding the global setting.
 
 ## Notes
 

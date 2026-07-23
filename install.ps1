@@ -17,6 +17,7 @@
 param(
     [string] $Gc2ccBaseUrl = 'https://bakapiano.github.io/gc2cc',
     [string] $CcsmPackage  = '@bakapiano/ccsm@latest',
+    [string] $NpmRegistry  = '',
     [string] $InstallClis  = 'ccp,cxp',
     [ValidateSet('ccp','cxp')]
     [string] $DefaultCli   = 'ccp',
@@ -102,6 +103,26 @@ function Resolve-WindowsPowerShell {
     return 'powershell.exe'
 }
 
+function Resolve-NpmRegistry {
+    $npm = Resolve-Npm
+    if (-not $npm) { return $null }
+
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $npm config get registry --location=global 2>$null
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($exitCode -ne 0) { return $null }
+
+    $registry = [string]($output | Where-Object { $_ } | Select-Object -Last 1)
+    $registry = $registry.Trim()
+    if ($registry -notmatch '^https?://') { return $null }
+    return $registry
+}
+
 function Invoke-Gc2ccInstall {
     if ($SkipGc2cc) {
         Warn 'Skipping gc2cc install by request.'
@@ -117,13 +138,16 @@ function Invoke-Gc2ccInstall {
         }
 
         Info "Installing gc2cc wrappers: $InstallClis"
-        Invoke-Native -FilePath (Resolve-WindowsPowerShell) -ArgumentList @(
+        $installerArgs = @(
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
             '-File', $tmp,
             '-InstallClis', $InstallClis,
             '-NonInteractive'
-        ) -FailureMessage 'gc2cc installer failed'
+        )
+        if ($NpmRegistry) { $installerArgs += @('-NpmRegistry', $NpmRegistry) }
+        Invoke-Native -FilePath (Resolve-WindowsPowerShell) -ArgumentList $installerArgs `
+            -FailureMessage 'gc2cc installer failed'
     } finally {
         if (-not $DryRun -and $tmp -and (Test-Path $tmp)) {
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
@@ -143,11 +167,13 @@ function Install-Ccsm {
         Die "npm.cmd was not found. Re-run after Node.js is installed, or let gc2cc finish installing Node.js first."
     }
 
-    Info "Installing ccsm package: $CcsmPackage"
+    Info "Installing ccsm package: $CcsmPackage (registry=$NpmRegistry)"
     Invoke-Native -FilePath $npm -ArgumentList @(
         'install',
         '-g',
         $CcsmPackage,
+        '--registry',
+        $NpmRegistry,
         '--no-fund',
         '--no-audit'
     ) -FailureMessage 'ccsm npm install failed'
@@ -424,7 +450,12 @@ Info 'Installing ccsm + gc2cc (ccp,cxp).'
 Info 'gc2cc may prompt for UAC and GitHub Copilot device-code auth.'
 Write-Host ''
 
+if (-not $NpmRegistry) { $NpmRegistry = Resolve-NpmRegistry }
+if ($NpmRegistry -and $NpmRegistry -notmatch '^https?://') { Die "Invalid npm registry URL: $NpmRegistry" }
+if ($NpmRegistry) { Info "npm source (global registry): $NpmRegistry" }
 Invoke-Gc2ccInstall
+if (-not $NpmRegistry) { $NpmRegistry = Resolve-NpmRegistry }
+if (-not $NpmRegistry) { Die 'Could not resolve the global npm registry with `npm config get registry --location=global`.' }
 Invoke-MissingGc2ccConfig
 Install-Ccsm
 Configure-Gc2ccAsCcsmBuiltins
