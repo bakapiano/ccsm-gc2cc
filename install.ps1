@@ -7,7 +7,8 @@
     Installs/updates:
       - gc2cc proxy service and both wrappers: ccp, cxp
       - @bakapiano/ccsm
-      - ccsm CLI registrations for ccp and cxp
+      - ccsm built-in Claude/Codex commands routed through ccp/cxp
+      - ccsm default CLI (ccp by default)
 
     Intended entry point:
       irm https://bakapiano.github.io/ccsm-gc2cc/install.ps1 | iex
@@ -17,6 +18,8 @@ param(
     [string] $Gc2ccBaseUrl = 'https://bakapiano.github.io/gc2cc',
     [string] $CcsmPackage  = '@bakapiano/ccsm@latest',
     [string] $InstallClis  = 'ccp,cxp',
+    [ValidateSet('ccp','cxp')]
+    [string] $DefaultCli   = 'ccp',
     [switch] $SkipGc2cc,
     [switch] $SkipCcsm,
     [switch] $SkipCcsmConfig,
@@ -201,25 +204,172 @@ function Invoke-MissingGc2ccConfig {
     }
 }
 
-function Register-Gc2ccWithCcsm {
+function Get-CcsmHome {
+    if ($env:CCSM_HOME) { return $env:CCSM_HOME }
+    return (Join-Path $HOME '.ccsm')
+}
+
+function Get-CcsmPreferredPort {
+    $configPath = Join-Path (Get-CcsmHome) 'config.json'
+    if (Test-Path $configPath) {
+        try {
+            $cfg = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($cfg.port) { return [int]$cfg.port }
+        } catch {}
+    }
+    return 7777
+}
+
+function Test-CcsmHealth {
+    param([Parameter(Mandatory)][int] $Port)
+    try {
+        $r = Invoke-WebRequest -Uri "http://localhost:$Port/api/health" -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop
+        $health = $r.Content | ConvertFrom-Json
+        return ($health.name -eq '@bakapiano/ccsm')
+    } catch {
+        return $false
+    }
+}
+
+function Get-RunningCcsmPort {
+    $preferred = Get-CcsmPreferredPort
+    foreach ($port in @($preferred) + @(1..9 | ForEach-Object { $preferred + $_ })) {
+        if (Test-CcsmHealth -Port $port) { return $port }
+    }
+    return $null
+}
+
+function Set-ObjectProperty {
+    param($Object, [string] $Name, $Value)
+    if ($Object.PSObject.Properties.Name -contains $Name) {
+        $Object.$Name = $Value
+    } else {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+    }
+}
+
+function New-Gc2ccBuiltinCli {
+    param([Parameter(Mandatory)][ValidateSet('ccp','cxp')][string] $Name)
+    $command = Join-Path $env:LOCALAPPDATA ("gc2cc\bin\{0}.cmd" -f $Name)
+    if (-not (Test-Path $command)) {
+        Die "$Name wrapper was not found at $command. The gc2cc install did not complete."
+    }
+
+    if ($Name -eq 'ccp') {
+        return [pscustomobject][ordered]@{
+            id               = 'claude'
+            name             = 'Claude Code via Copilot (ccp)'
+            command          = $command
+            args             = @()
+            resumeLatestArgs = @('--continue')
+            resumePickerArgs = @('--resume')
+            resumeIdArgs     = @('--resume', '<id>')
+            shell            = 'direct'
+            type             = 'claude'
+            builtin          = $true
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        id               = 'codex'
+        name             = 'Codex via Copilot (cxp)'
+        command          = $command
+        args             = @()
+        resumeLatestArgs = @('resume', '--last')
+        resumePickerArgs = @('resume')
+        resumeIdArgs     = @('resume', '<id>')
+        shell            = 'direct'
+        type             = 'codex'
+        builtin          = $true
+    }
+}
+
+function Merge-Gc2ccBuiltins {
+    param($Config)
+    $requested = @(Get-RequestedWrapperNames)
+    if ($requested.Count -eq 0) { return $Config }
+
+    $replaceIds = @()
+    if ($requested -contains 'ccp') { $replaceIds += 'claude' }
+    if ($requested -contains 'cxp') { $replaceIds += 'codex' }
+
+    # Remove old custom ccp/cxp entries and the built-ins being replaced.
+    $preserved = @()
+    if (($Config.PSObject.Properties.Name -contains 'clis') -and $Config.clis) {
+        $preserved = @($Config.clis | Where-Object {
+            $_.id -notin @('ccp', 'cxp') -and $_.id -notin $replaceIds
+        })
+    }
+
+    $managed = @()
+    foreach ($name in $requested) { $managed += New-Gc2ccBuiltinCli $name }
+    Set-ObjectProperty $Config 'clis' @($managed + $preserved)
+
+    $effectiveDefault = $DefaultCli
+    if ($requested -notcontains $effectiveDefault) {
+        $effectiveDefault = $requested[0]
+        Warn "Requested default '$DefaultCli' is not installed; using '$effectiveDefault'."
+    }
+    $defaultId = if ($effectiveDefault -eq 'cxp') { 'codex' } else { 'claude' }
+    Set-ObjectProperty $Config 'defaultCliId' $defaultId
+    return $Config
+}
+
+function Configure-Gc2ccAsCcsmBuiltins {
     if ($SkipCcsmConfig) {
         Warn 'Skipping ccsm CLI registration by request.'
         return
     }
 
-    foreach ($name in Get-RequestedWrapperNames) {
-        $script = Resolve-WrapperScript $name
-        if (-not (Test-Path $script)) {
-            Die "$name wrapper script was not found at $script. The gc2cc install did not complete."
-        }
-        Info "Registering $name in ccsm config"
-        Invoke-Native -FilePath (Resolve-WindowsPowerShell) -ArgumentList @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', $script,
-            'ccsm'
-        ) -FailureMessage "$name ccsm registration failed"
+    $requested = @(Get-RequestedWrapperNames)
+    if ($requested.Count -eq 0) {
+        Warn 'No gc2cc wrappers selected; skipping ccsm CLI replacement.'
+        return
     }
+
+    if ($DryRun) {
+        $defaultId = if ($DefaultCli -eq 'cxp') { 'codex' } else { 'claude' }
+        Info ("DRY RUN: replace ccsm built-ins with {0}; set defaultCliId={1}" -f ($requested -join ','), $defaultId)
+        return
+    }
+
+    $ccsmHome = Get-CcsmHome
+    $configPath = Join-Path $ccsmHome 'config.json'
+    $runningPort = Get-RunningCcsmPort
+
+    if ($runningPort) {
+        $baseUrl = "http://localhost:$runningPort"
+        Info "Replacing ccsm built-in CLIs through $baseUrl/api/config"
+        try {
+            $cfg = (Invoke-WebRequest -Uri "$baseUrl/api/config" -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop).Content | ConvertFrom-Json
+            $cfg = Merge-Gc2ccBuiltins $cfg
+            $json = $cfg | ConvertTo-Json -Depth 50
+            Invoke-WebRequest -Uri "$baseUrl/api/config" -Method PUT -Body $json `
+                -ContentType 'application/json; charset=utf-8' -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop | Out-Null
+        } catch {
+            Die "Failed to configure running ccsm at ${baseUrl}: $_"
+        }
+    } else {
+        Info "ccsm is not running; updating $configPath directly"
+        if (Test-Path $configPath) {
+            try {
+                $cfg = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            } catch {
+                Die "$configPath is invalid JSON; refusing to overwrite it: $_"
+            }
+        } else {
+            New-Item -ItemType Directory -Force -Path $ccsmHome | Out-Null
+            $cfg = [pscustomobject]@{}
+        }
+        $cfg = Merge-Gc2ccBuiltins $cfg
+        $json = $cfg | ConvertTo-Json -Depth 50
+        [System.IO.File]::WriteAllText($configPath, $json, (New-Object System.Text.UTF8Encoding $false))
+    }
+
+    $effectiveDefault = if ($requested -contains $DefaultCli) { $DefaultCli } else { $requested[0] }
+    $defaultLabel = if ($effectiveDefault -eq 'cxp') { 'Codex via Copilot (cxp)' } else { 'Claude Code via Copilot (ccp)' }
+    Ok ("Replaced ccsm built-in entries with: {0}." -f ($requested -join ', '))
+    Ok "ccsm default CLI: $defaultLabel"
 }
 
 function Resolve-CcsmCommand {
@@ -277,7 +427,7 @@ Write-Host ''
 Invoke-Gc2ccInstall
 Invoke-MissingGc2ccConfig
 Install-Ccsm
-Register-Gc2ccWithCcsm
+Configure-Gc2ccAsCcsmBuiltins
 Launch-Ccsm
 
 Write-Host ''

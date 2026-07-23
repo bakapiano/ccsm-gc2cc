@@ -4,7 +4,8 @@ One-line Windows installer for:
 
 - `@bakapiano/ccsm`
 - `gc2cc` with both `ccp` and `cxp`
-- ccsm CLI registrations for `ccp` and `cxp`
+- replacement of ccsm's built-in Claude/Codex entries with `ccp`/`cxp`
+- `ccp` as the ccsm default CLI (`-DefaultCli cxp` is also supported)
 - first-run interactive `ccp config` / `cxp config` when their config files do
   not exist yet
 
@@ -22,23 +23,23 @@ The script delegates the proxy/service setup to the canonical gc2cc installer:
 https://bakapiano.github.io/gc2cc/install.ps1 -InstallClis ccp,cxp -NonInteractive
 ```
 
-Then it runs missing first-run configs, installs ccsm through npm, and registers
-the wrappers with ccsm:
+Then it runs missing first-run configs, installs ccsm through npm, replaces
+ccsm's built-in Claude/Codex commands, and sets the default CLI:
 
 ```powershell
 ccp config   # only when ~/.local/share/gc2cc/ccp.json is missing
 cxp config   # only when ~/.local/share/gc2cc/cxp.json is missing
-ccp ccsm
-cxp ccsm
+# ccsm built-in "Claude Code" -> %LOCALAPPDATA%\gc2cc\bin\ccp.cmd
+# ccsm built-in "OpenAI Codex" -> %LOCALAPPDATA%\gc2cc\bin\cxp.cmd
+# defaultCliId -> claude (ccp)
 ```
 
-That writes the wrapper entries into `~/.ccsm/config.json`, so ccsm can launch
-Claude Code through `ccp` and Codex through `cxp`. If ccsm is already running,
-the wrappers update it through ccsm's own `/api/config` endpoint rather than
-stopping it or editing the file behind its back. The installer invokes the
-wrapper PowerShell scripts and `ccsm.cmd` by their installed paths, so it does
-not rely on the current shell already having refreshed PATH after npm/gc2cc
-installation.
+If ccsm is already running, the installer updates it through ccsm's own
+`/api/config` endpoint. If it is offline, the installer edits
+`~/.ccsm/config.json` directly. Existing custom CLIs are preserved, while old
+duplicate `ccp` / `cxp` entries are removed. The installer uses installed
+absolute paths, so it does not rely on the current shell already having
+refreshed PATH after npm/gc2cc installation.
 
 ## Notes
 
